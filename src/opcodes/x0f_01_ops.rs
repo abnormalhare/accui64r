@@ -1,10 +1,17 @@
-use crate::{opcodes::std_ops::OpFuncRet, ram::RAM, reg::{ModRM, RegType}, x64::{AddressSize, CPU, InfoType}};
+use crate::{debug::{OpOrder, dbp}, opcodes::std_ops::OpFuncRet, ram::RAM, reg::{ModRM, RegType}, x64::{AddressSize, CPU}};
 
 fn op_0f_01_0(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) -> bool {
     todo!("\n\nImplement opcode 0F 01 /0");
 }
 
-fn lidt(cpu: &mut CPU, ram: &mut RAM, modrm: &ModRM) {
+fn op_0f_01_1(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) -> bool {
+    todo!("\n\nImplement opcode 0F 01 /1");
+}
+
+fn op_0f_01_2(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) -> bool {
+    todo!("\n\nImplement opcode 0F 01 /2");
+}
+fn op_0f_01_3(cpu: &mut CPU, ram: &mut RAM, modrm: &ModRM) -> bool {
     let mut new_modrm: ModRM = modrm.clone();
     let ad_size: AddressSize = cpu.deter_ad_size();
 
@@ -17,10 +24,12 @@ fn lidt(cpu: &mut CPU, ram: &mut RAM, modrm: &ModRM) {
         },
         AddressSize::BIT32 => {
             new_modrm.rm_type = Some(RegType::R32);
+            new_modrm.sib.idx_type  = Some(RegType::R32);
             new_modrm.rm = modrm._rm;
         },
         AddressSize::BIT64 => {
             new_modrm.rm_type = Some(RegType::R64);
+            new_modrm.sib.idx_type  = Some(RegType::R64);
             new_modrm.rm = modrm._rm;
         }
     }
@@ -30,33 +39,22 @@ fn lidt(cpu: &mut CPU, ram: &mut RAM, modrm: &ModRM) {
     
     match ad_size {
         AddressSize::BIT16 => {
-            cpu.idtr.size = cpu.get_val16(ram, addr);
-            cpu.idtr.addr = (cpu.get_val32(ram, addr + 2) & 0x00FFFFFF) as u64;
+            cpu.idtr.limit = cpu.get_val16(ram, addr);
+            cpu.idtr.base = (cpu.get_val32(ram, addr + 2) & 0x00FFFFFF) as u64;
         },
         AddressSize::BIT32 => {
-            cpu.idtr.size = cpu.get_val16(ram, addr);
-            cpu.idtr.addr = cpu.get_val32(ram, addr + 2) as u64;
+            cpu.idtr.limit = cpu.get_val16(ram, addr);
+            cpu.idtr.base = cpu.get_val32(ram, addr + 2) as u64;
         },
         AddressSize::BIT64 => {
-            cpu.idtr.size = cpu.get_val16(ram, addr);
-            cpu.idtr.addr = cpu.get_val64(ram, addr + 2);
+            cpu.idtr.limit = cpu.get_val16(ram, addr);
+            cpu.idtr.base = cpu.get_val64(ram, addr + 2);
         }
     }
-}
 
-fn op_0f_01_1(cpu: &mut CPU, ram: &mut RAM, modrm: &ModRM) -> bool {
-    match modrm._reg {
-        3 => lidt(cpu, ram, modrm),
-        _ => {}
-    }
+    dbp(cpu, "LIDT", &new_modrm, 0, 0, OpOrder::RM);
+
     false
-}
-
-fn op_0f_01_2(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) -> bool {
-    todo!("\n\nImplement opcode 0F 01 /2");
-}
-fn op_0f_01_3(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) -> bool {
-    todo!("\n\nImplement opcode 0F 01 /3");
 }
 fn op_0f_01_4(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) -> bool {
     todo!("\n\nImplement opcode 0F 01 /4");

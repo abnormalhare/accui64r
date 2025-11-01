@@ -79,7 +79,7 @@ impl CPU {
             info: HashMap::new(),
 
             regs: [Reg::new(); 16],
-            st_regs: [default_st_reg; 6],
+            st_regs: [default_st_reg.clone(); 6],
             mm_regs: [0u64; 8],
             xm_regs: [XMMReg { valn: [0u64; 8] }; 16],
             cr_regs: [50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -89,10 +89,10 @@ impl CPU {
             ip: Reg { val: 0xFFF0 },
             flags: 0,
 
-            gdtr: DataTableReg { size: 0, addr: 0 },
+            gdtr: DataTableReg { limit: 0, base: 0xFFFF },
             ldtr: 0,
             tr: 0,
-            idtr: DataTableReg { size: 0, addr: 0 },
+            idtr: DataTableReg { limit: 0, base: 0xFFFF },
             ia32_efer: 0,
 
             fs_base: 0xC0000100,
@@ -123,7 +123,7 @@ impl CPU {
     }
 
     pub fn deter_ad_size(&self) -> AddressSize {
-        if (self.is_16bit_mode() && self.info.contains_key(&InfoType::ADDRESS)) || (self.is_32bit_mode() && self.info.contains_key(&InfoType::ADDRESS)) {
+        if (self.is_16bit_mode() && !self.info.contains_key(&InfoType::ADDRESS)) || (self.is_32bit_mode() && self.info.contains_key(&InfoType::ADDRESS)) {
             return AddressSize::BIT16;
         }
         if self.is_32bit_mode() || ((self.is_16bit_mode() || self.is_64bit_mode()) && self.info.contains_key(&InfoType::ADDRESS)) {
@@ -146,38 +146,37 @@ impl CPU {
         }
         if self.info.contains_key(&InfoType::CS) {
             let temp_info = self.info.get(&InfoType::CS).unwrap();
-            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(1);
                 seg = self.info.get(&InfoType::CS);
             }
-            ret = Some(1);
         }
         if self.info.contains_key(&InfoType::SS) {
             let temp_info = self.info.get(&InfoType::SS).unwrap();
-            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(2);
                 seg = self.info.get(&InfoType::SS);
             }
-            ret = Some(2);
         }
         if self.info.contains_key(&InfoType::DS) {
             let temp_info = self.info.get(&InfoType::DS).unwrap();
-            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(3);
                 seg = self.info.get(&InfoType::DS);
             }
-            ret = Some(3);
         }
         if self.info.contains_key(&InfoType::FS) {
             let temp_info = self.info.get(&InfoType::FS).unwrap();
-            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(4);
                 seg = self.info.get(&InfoType::FS);
             }
-            ret = Some(4);
         }
         if self.info.contains_key(&InfoType::GS) {
             let temp_info = self.info.get(&InfoType::GS).unwrap();
-            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
-                seg = self.info.get(&InfoType::GS);
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(5);
             }
-            ret = Some(5);
         }
 
         ret
@@ -319,9 +318,12 @@ impl CPU {
             print!("{:>3}: {:016X}  ", get_reg_name(i + 2, RegType::R64), self.regs[i as usize + 2].get(RegType::R64));
             println!("{:>3}: {:016X}", get_reg_name(i + 3, RegType::R64), self.regs[i as usize + 3].get(RegType::R64));
         }
+        println!();
+
+        println!("IDTR: size: {}, addr: {}", self.idtr.base, self.idtr.limit);
     }
 
-    pub fn get_reg_ptr(&self, ram: &mut RAM, idx: u8, reg_type: RegType) -> u64 {
+    pub fn get_reg_ptr(&self, idx: u8, reg_type: RegType) -> u64 {
         let mut val: u64 = 0;
 
         let segidx = self.get_seg_override_idx();
@@ -337,13 +339,8 @@ impl CPU {
     pub fn get_modrm_ptr(&mut self, ram: &mut RAM, modrm: &ModRM, disp: &mut u32) -> u64 {
         let mut val: u64 = 0;
 
-        let segidx = self.get_seg_override_idx();
-        if !segidx.is_none() {
-            val += self.st_regs[segidx.unwrap() as usize].base as u64;
-        }
-
         if !modrm.should_use_sib() {
-            if !modrm.reg_type.is_none() {
+            if !modrm.rm_type.is_none() {
                 let rm_type: RegType = modrm.rm_type.unwrap();
 
                 val += self.regs[modrm.rm as usize].get(rm_type);
@@ -399,8 +396,8 @@ impl CPU {
             3 => { modrm.sib.idx = 7; modrm.sib.base = 5; }
             4 => { modrm.rm = 4; }
             5 => { modrm.rm = 5; }
-            6 => { modrm.rm = 3; }
-            7 => { modrm.rm = 7; }
+            6 => { modrm.rm = 7; }
+            7 => { modrm.rm = 3; }
             _ => {}
         }
     }

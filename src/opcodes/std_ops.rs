@@ -154,7 +154,7 @@ pub fn op_29(cpu: &mut CPU, ram: &mut RAM) -> bool {
         cpu.write(ram, addr as usize, res, get_size(reg_type));
     }
 
-    dbp("SUB", &modrm, disp, 0, OpOrder::RM_R);
+    dbp(cpu, "SUB", &modrm, disp, 0, OpOrder::RM_R);
 
     false
 }
@@ -176,7 +176,7 @@ pub fn op_2e(cpu: &mut CPU, _ram: &mut RAM) -> bool {
     let pos: u8 = cpu.info.len() as u8;
 
     cpu.info.insert(
-        InfoType::OPERAND, Info { val: 0x2E, pos: pos }
+        InfoType::CS, Info { val: 0x2E, pos: pos }
     );
 
     true
@@ -210,7 +210,7 @@ pub fn op_31(cpu: &mut CPU, ram: &mut RAM) -> bool {
         cpu.write(ram, addr as usize, res, get_size(reg_type));
     }
 
-    dbp("XOR", &modrm, disp, 0, OpOrder::RM_R);
+    dbp(cpu, "XOR", &modrm, disp, 0, OpOrder::RM_R);
 
     false
 }
@@ -497,7 +497,7 @@ pub fn op_89(cpu: &mut CPU, ram: &mut RAM) -> bool {
         cpu.write_reg(ram, addr, modrm.reg, reg_type);
     }
 
-    dbp("MOV", &modrm, disp, 0, OpOrder::RM_R);
+    dbp(cpu, "MOV", &modrm, disp, 0, OpOrder::RM_R);
 
     false
 }
@@ -528,7 +528,7 @@ pub fn op_8c(cpu: &mut CPU, ram: &mut RAM) -> bool {
 
     modrm.reg_type = Some(RegType::ST);
 
-    dbp("MOV", &modrm, disp, 0, OpOrder::RM_R);
+    dbp(cpu, "MOV", &modrm, disp, 0, OpOrder::RM_R);
 
     false
 }

@@ -1,4 +1,4 @@
-use crate::reg::{ModRM, RegType};
+use crate::{reg::{ModRM, RegType}, x64::CPU};
 
 static R8_NAMES: [&str; 0x10] = [
     "AL",   "CL",   "DL",   "BL",
@@ -77,31 +77,43 @@ pub fn get_reg_ptr_name(reg_type: RegType) -> &'static str {
     }
 }
 
-fn dbp_mem(modrm: &ModRM, disp: u32) -> String {
+fn dbp_mem(cpu: &CPU, modrm: &ModRM, disp: u32) -> String {
     let mut ret: String = String::new();
     
 
     if modrm._mod == 3 {
         let rm_type  = modrm.rm_type.unwrap();
 
-        ret += get_reg_name(modrm._rm, rm_type);
+        ret += get_reg_name(modrm.rm, rm_type);
         return ret;
     }
 
-    ret += get_reg_ptr_name(modrm.reg_type.unwrap());
-    ret += " [";
+    let segidx = cpu.get_seg_override_idx();
+    if !segidx.is_none() {
+        ret += get_reg_name(segidx.unwrap(), RegType::ST);
+        ret += ":"
+    }
+
+    if !modrm.reg_type.is_none() {
+        ret += get_reg_ptr_name(modrm.reg_type.unwrap());
+    }
+    
+    if segidx.is_none() {
+        ret += " ";
+    }
+    ret += "[";
 
     if !modrm.should_use_sib() {
         if !modrm.rm_type.is_none() {
             let rm_type  = modrm.rm_type.unwrap();
 
-            ret += get_reg_name(modrm._rm, rm_type);
+            ret += get_reg_name(modrm.rm, rm_type);
         }
     } else {
         if !modrm.sib.idx_type.is_none() {
             let idx_type = modrm.sib.idx_type.unwrap();
 
-            ret += get_reg_name(modrm.sib._idx, idx_type);
+            ret += get_reg_name(modrm.sib.idx, idx_type);
             ret += &format!("* {}", modrm.sib.mul);
         }
 
@@ -112,7 +124,7 @@ fn dbp_mem(modrm: &ModRM, disp: u32) -> String {
 
             let base_type = modrm.sib.base_type.unwrap();
 
-            ret += get_reg_name(modrm.sib._base, base_type);
+            ret += get_reg_name(modrm.sib.base, base_type);
         }
     }
 
@@ -129,6 +141,8 @@ fn dbp_mem(modrm: &ModRM, disp: u32) -> String {
         }
     }
 
+    ret += "]";
+
     ret
 }
 
@@ -143,25 +157,26 @@ pub enum OpOrder {
     RM_VAL,
     R_RM,
     R_VAL,
+    RM,
 }
 
-pub fn dbp(name: &str, modrm: &ModRM, disp: u32, val: u64, order: OpOrder) {
+pub fn dbp(cpu: &CPU, name: &str, modrm: &ModRM, disp: u32, val: u64, order: OpOrder) {
     let mut out: String = name.to_string();
     out += " ";
 
     match order {
         OpOrder::RM_R => {
-            out += &dbp_mem(modrm, disp);
+            out += &dbp_mem(cpu, modrm, disp);
             out += ", ";
             out += &dbp_reg(modrm);
         },
         OpOrder::R_RM => {
             out += &dbp_reg(modrm);
             out += ", ";
-            out += &dbp_mem(modrm, disp);
+            out += &dbp_mem(cpu, modrm, disp);
         },
         OpOrder::RM_VAL => {
-            out += &dbp_mem(modrm, disp);
+            out += &dbp_mem(cpu, modrm, disp);
             out += ", ";
             out += &format!("{val}");
         },
@@ -170,6 +185,9 @@ pub fn dbp(name: &str, modrm: &ModRM, disp: u32, val: u64, order: OpOrder) {
             out += ", ";
             out += &format!("{val}");
         },
+        OpOrder::RM => {
+            out += &dbp_mem(cpu, modrm, disp);
+        }
     }
 
     println!("{}", out);

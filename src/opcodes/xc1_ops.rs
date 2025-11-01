@@ -32,7 +32,7 @@ fn op_c1_4(cpu: &mut CPU, ram: &mut RAM, modrm: &ModRM) {
         cpu.write(ram, addr as usize, res, get_size(reg_type));
     }
 
-    dbp("SHL", modrm, disp, val, OpOrder::RM_VAL);
+    dbp(cpu, "SHL", modrm, disp, val, OpOrder::RM_VAL);
 }
 
 fn op_c1_5(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) {

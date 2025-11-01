@@ -44,8 +44,13 @@ impl Reg {
 
     pub fn get(&self, reg_type: RegType) -> u64 {
         match reg_type {
-            RegType::R8H => x64::get_mask(self.val, 15, 8).into(),
-            _ => self.val.into(),
+            RegType::R8H => return x64::get_mask(self.val, 15, 8).into(),
+            _ => {
+                let bits = get_size(reg_type) * 8;
+                let mask: u64 = get_bit_mask(reg_type, bits);
+
+                return self.val & mask;
+            },
         }
     }
 
@@ -92,8 +97,8 @@ pub struct SegReg {
 
 #[derive(Clone, Copy)]
 pub struct DataTableReg {
-    pub size: u16,
-    pub addr: u64,
+    pub limit: u16,
+    pub base: u64,
 }
 
 #[derive(Clone, Copy)]
