@@ -1,0 +1,10 @@
+[package]
+name = "accui64r"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+accui64r_macncheese = { path = "./accui64r_macncheese" }
+
+[workspace]
+members = ["./accui64r_macncheese"]
