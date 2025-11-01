@@ -5,7 +5,7 @@ pub fn op_0f_00(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 }
 
 pub fn op_0f_01(cpu: &mut CPU, ram: &mut RAM) -> bool {
-    let val: u8 = cpu.read_code(ram);
+    let val: u8 = cpu.read(ram);
     let modrm: ModRM = ModRM::new(val.into());
 
     OP_0F_01_TBL[modrm._reg as usize](cpu, ram, &modrm)
@@ -109,7 +109,7 @@ pub fn op_0f_21(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 }
 
 pub fn op_0f_22(cpu: &mut CPU, ram: &mut RAM) -> bool {
-    let val: u8 = cpu.read_code(ram);
+    let val: u8 = cpu.read(ram);
     let modrm: ModRM = ModRM::new(val as u64);
     let reg_type: RegType = if cpu.is_64bit_mode() { RegType::R64 } else { RegType::R32 };
 

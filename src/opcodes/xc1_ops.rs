@@ -1,4 +1,4 @@
-use crate::{alu, debug::{OpOrder, dbp}, opcodes::std_ops::OpFunc, ram::RAM, reg::{ModRM, RegType}, x64::CPU};
+use crate::{alu, debug::{OpOrder, dbp}, opcodes::std_ops::OpFunc, ram::RAM, reg::{ModRM, RegType, get_size}, x64::CPU};
 
 fn op_c1_0(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) {
     todo!("\n\nImplement opcode C1 /0");
@@ -16,7 +16,7 @@ fn op_c1_3(_cpu: &mut CPU, _ram: &mut RAM, _modrm: &ModRM) {
 fn op_c1_4(cpu: &mut CPU, ram: &mut RAM, modrm: &ModRM) {
     let reg_type: RegType = modrm.reg_type.unwrap();
     let mut disp: u32 = 0;
-    let val: u64 = cpu.read_code(ram) as u64;
+    let val: u64 = cpu.read(ram) as u64;
 
     if modrm.rm_is_reg() {
         let dst = cpu.regs[modrm.rm as usize].get(reg_type);
@@ -29,7 +29,7 @@ fn op_c1_4(cpu: &mut CPU, ram: &mut RAM, modrm: &ModRM) {
         let dst = cpu.regs[modrm.rm as usize].get(reg_type);
         let res = alu::shl(cpu, reg_type, dst, val);
         
-        cpu.write(ram, addr as usize, res, cpu.get_size(reg_type));
+        cpu.write(ram, addr as usize, res, get_size(reg_type));
     }
 
     dbp("SHL", modrm, disp, val, OpOrder::RM_VAL);

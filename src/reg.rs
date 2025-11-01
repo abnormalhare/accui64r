@@ -1,4 +1,4 @@
-use crate::{ram, x64::{self, get_mask}};
+use crate::{alu::get_bit_mask, ram, x64::{self, get_mask}};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RegType {
@@ -53,10 +53,26 @@ impl Reg {
         match reg_type {
             RegType::R8H => {
                 self.val &= !0xFF00;
-                self.val |= val << 8;
+                self.val |= (val & 0xFF) << 8;
             },
-            _ => self.val = val.into(),
+            _ => {
+                let bits = get_size(reg_type) * 8;
+                let mask: u64 = get_bit_mask(reg_type, bits);
+
+                self.val &= !mask;
+                self.val |= val & mask;
+            },
         }
+    }
+}
+
+pub fn get_size(reg_type: RegType) -> usize {
+    match reg_type {
+        RegType::R8 | RegType::R8H => 1,
+        RegType::R16 => 2,
+        RegType::R32 => 4,
+        RegType::R64 => 8,
+        _ => 0,
     }
 }
 
@@ -184,6 +200,7 @@ impl CR4 {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct SIB {
     pub _ss: u8,
     pub _base: u8,
@@ -198,6 +215,7 @@ pub struct SIB {
     pub mul: u8,
 }
 
+#[derive(Clone, Copy)]
 pub struct ModRM {
     pub _mod: u8,
     pub _reg: u8,

@@ -1,4 +1,4 @@
-use crate::{alu, debug::{OpOrder, dbp}, opcodes::xc1_ops::OP_C1_TBL, ram::RAM, reg::{CR4, Flag, ModRM, REXBit, RegType}, x64::{CPU, Info, InfoType}};
+use crate::{alu, debug::{OpOrder, dbp}, opcodes::xc1_ops::OP_C1_TBL, ram::RAM, reg::{CR4, Flag, ModRM, REXBit, RegType, get_size}, x64::{CPU, Info, InfoType}};
 use accui64r_macncheese::find_opcode_0f;
 
 pub type OpFunc    = fn(&mut CPU, &mut RAM, &ModRM);
@@ -52,7 +52,7 @@ pub fn op_0e(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 
 use crate::opcodes::x0f_ops::*;
 pub fn op_0f(cpu: &mut CPU, ram: &mut RAM) -> bool {
-    let subop: u8 = cpu.read_code(ram);
+    let subop: u8 = cpu.read(ram);
 
     find_opcode_0f!(subop, cpu, ram)
 }
@@ -147,11 +147,11 @@ pub fn op_29(cpu: &mut CPU, ram: &mut RAM) -> bool {
     } else {
         let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
         
-        let src = cpu.get(ram, addr);
+        let src = cpu.get(ram, addr) as u64;
         let dst = cpu.regs[modrm.rm as usize].get(reg_type);
         let res = alu::sub(cpu, reg_type, dst, src);
         
-        cpu.write(ram, addr as usize, res, cpu.get_size(reg_type));
+        cpu.write(ram, addr as usize, res, get_size(reg_type));
     }
 
     dbp("SUB", &modrm, disp, 0, OpOrder::RM_R);
@@ -203,11 +203,11 @@ pub fn op_31(cpu: &mut CPU, ram: &mut RAM) -> bool {
     } else {
         let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
         
-        let src = cpu.get(ram, addr);
+        let src = cpu.get(ram, addr) as u64;
         let dst = cpu.regs[modrm.rm as usize].get(reg_type);
         let res = alu::xor(cpu, reg_type, dst, src);
         
-        cpu.write(ram, addr as usize, res, cpu.get_size(reg_type));
+        cpu.write(ram, addr as usize, res, get_size(reg_type));
     }
 
     dbp("XOR", &modrm, disp, 0, OpOrder::RM_R);
@@ -523,7 +523,7 @@ pub fn op_8c(cpu: &mut CPU, ram: &mut RAM) -> bool {
         let val: u16 = cpu.st_regs[modrm._reg as usize].selector;
         let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
 
-        cpu.write(ram, addr as usize, val.into(), cpu.get_size(reg_type));
+        cpu.write(ram, addr as usize, val.into(), get_size(reg_type));
     }
 
     modrm.reg_type = Some(RegType::ST);
@@ -674,7 +674,7 @@ pub fn op_ba(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 
 pub fn op_bb(cpu: &mut CPU, ram: &mut RAM) -> bool {
     if cpu.info.contains_key(&InfoType::OPERAND) ^ !cpu.is_16bit_mode() {
-        let val: u16 = cpu.get_val16(ram);
+        let val: u16 = cpu.read_val16(ram);
         cpu.regs[3].set(RegType::R16, val as u64);
 
         println!("MOV BX, {val:0>4X}");
@@ -684,7 +684,7 @@ pub fn op_bb(cpu: &mut CPU, ram: &mut RAM) -> bool {
     if cpu.info.contains_key(&InfoType::REX) {
         let rex= cpu.info.get(&InfoType::REX).unwrap();
         if rex.val & REXBit::W as u8 != 0 {
-            let val: u64 = cpu.get_val64(ram);
+            let val: u64 = cpu.read_val64(ram);
             cpu.regs[3].set(RegType::R64, val);
 
             println!("MOV RBX, {val:0>16X}");
@@ -692,7 +692,7 @@ pub fn op_bb(cpu: &mut CPU, ram: &mut RAM) -> bool {
         }
     }
 
-    let val: u32 = cpu.get_val32(ram);
+    let val: u32 = cpu.read_val32(ram);
     cpu.regs[3].set(RegType::R32, val as u64);
 
     println!("MOV EBX, {val:0>8X}");
@@ -844,7 +844,7 @@ pub fn op_e8(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 
 pub fn op_e9(cpu: &mut CPU, ram: &mut RAM) -> bool {
     if cpu.is_16bit_mode() {
-        let jump_addr: i16 = cpu.get_val16(ram) as i16;
+        let jump_addr: i16 = cpu.read_val16(ram) as i16;
         let mut ip: u16 = cpu.ip.get(RegType::R16) as u16;
         
         ip = ip.wrapping_add_signed(jump_addr);

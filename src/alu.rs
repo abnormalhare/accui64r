@@ -1,4 +1,4 @@
-use crate::{reg::{Flag, RegType}, x64::CPU};
+use crate::{reg::{Flag, RegType, get_size}, x64::CPU};
 
 fn get_parity(val: u8) -> bool {
     let mut res: u8 = val;
@@ -9,14 +9,14 @@ fn get_parity(val: u8) -> bool {
     (res & 1) == 0
 }
 
-fn get_mask(reg_type: RegType, bits: usize) -> u64 {
+pub fn get_bit_mask(reg_type: RegType, bits: usize) -> u64 {
     if reg_type == RegType::R64 { u64::MAX } else { (1u64 << bits) - 1 }
 }
 
 pub fn shl(cpu: &mut CPU, reg_type: RegType, a: u64, b: u64) -> u64 {
     let (res, _) = a.overflowing_shl(b as u32 /* ! */);
-    let bits: usize = cpu.get_size(reg_type) * 8;
-    let mask: u64 = get_mask(reg_type, bits);
+    let bits: usize = get_size(reg_type) * 8;
+    let mask: u64 = get_bit_mask(reg_type, bits);
 
     if b != 0 { // if shift == 0, carry unchanged
         let mask: u64 = 1u64 << (bits - 1);
@@ -40,8 +40,8 @@ pub fn shl(cpu: &mut CPU, reg_type: RegType, a: u64, b: u64) -> u64 {
 }
 
 pub fn sub(cpu: &mut CPU, reg_type: RegType, a: u64, b: u64) -> u64 {
-    let bits: usize = cpu.get_size(reg_type) * 8;
-    let mask: u64 = get_mask(reg_type, bits);
+    let bits: usize = get_size(reg_type) * 8;
+    let mask: u64 = get_bit_mask(reg_type, bits);
     let res: u64 = a.wrapping_sub(b) & mask;
     let topbit: u64 = 1u64 << (bits - 1);
 
@@ -56,8 +56,8 @@ pub fn sub(cpu: &mut CPU, reg_type: RegType, a: u64, b: u64) -> u64 {
 }
 
 pub fn xor(cpu: &mut CPU, reg_type: RegType, a: u64, b: u64) -> u64 {
-    let bits: usize = cpu.get_size(reg_type) * 8;
-    let mask: u64 = get_mask(reg_type, bits);
+    let bits: usize = get_size(reg_type) * 8;
+    let mask: u64 = get_bit_mask(reg_type, bits);
     let res: u64 = a ^ b;
 
     Flag::set_flag(&mut cpu.flags, Flag::CARRY_FLAG,  false);

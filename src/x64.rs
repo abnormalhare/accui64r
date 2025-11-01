@@ -1,6 +1,6 @@
 use accui64r_macncheese::find_opcode;
 
-use crate::{debug::get_reg_name, ram::RAM, reg::{CR0, CR4, DataTableReg, ModRM, REXBit, Reg, RegType, SegReg, XMMReg}};
+use crate::{debug::get_reg_name, ram::RAM, reg::{CR0, CR4, DataTableReg, ModRM, REXBit, Reg, RegType, SegReg, XMMReg, get_size}};
 use std::{collections::HashMap};
 use crate::opcodes::std_ops::*;
 
@@ -18,7 +18,7 @@ pub enum InfoType {
     REX,
     OPERAND,
     ADDRESS,
-    ES, CS, SS, DS,
+    ES, CS, SS, DS, FS, GS,
     NULL,
 }
 
@@ -58,6 +58,11 @@ pub struct CPU {
 }
 
 pub enum OperandSize {
+    BIT16,
+    BIT32,
+    BIT64,
+}
+pub enum AddressSize {
     BIT16,
     BIT32,
     BIT64,
@@ -117,29 +122,83 @@ impl CPU {
         return OperandSize::BIT32;
     }
 
-    pub fn cs(&self) -> SegReg { self.st_regs[1] }
+    pub fn deter_ad_size(&self) -> AddressSize {
+        if (self.is_16bit_mode() && self.info.contains_key(&InfoType::ADDRESS)) || (self.is_32bit_mode() && self.info.contains_key(&InfoType::ADDRESS)) {
+            return AddressSize::BIT16;
+        }
+        if self.is_32bit_mode() || ((self.is_16bit_mode() || self.is_64bit_mode()) && self.info.contains_key(&InfoType::ADDRESS)) {
+            return AddressSize::BIT32;
+        }
 
+        AddressSize::BIT64
+    }
+
+    pub fn cs(&self) -> SegReg { self.st_regs[1] }
     pub fn ds(&self) -> SegReg { self.st_regs[3] }
+
+    pub fn get_seg_override_idx(&self) -> Option<u8> {
+        let mut ret: Option<u8> = None;
+        let mut seg: Option<&Info> = None;
+
+        if self.info.contains_key(&InfoType::ES) {
+            ret = Some(0);
+            seg = self.info.get(&InfoType::ES);
+        }
+        if self.info.contains_key(&InfoType::CS) {
+            let temp_info = self.info.get(&InfoType::CS).unwrap();
+            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+                seg = self.info.get(&InfoType::CS);
+            }
+            ret = Some(1);
+        }
+        if self.info.contains_key(&InfoType::SS) {
+            let temp_info = self.info.get(&InfoType::SS).unwrap();
+            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+                seg = self.info.get(&InfoType::SS);
+            }
+            ret = Some(2);
+        }
+        if self.info.contains_key(&InfoType::DS) {
+            let temp_info = self.info.get(&InfoType::DS).unwrap();
+            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+                seg = self.info.get(&InfoType::DS);
+            }
+            ret = Some(3);
+        }
+        if self.info.contains_key(&InfoType::FS) {
+            let temp_info = self.info.get(&InfoType::FS).unwrap();
+            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+                seg = self.info.get(&InfoType::FS);
+            }
+            ret = Some(4);
+        }
+        if self.info.contains_key(&InfoType::GS) {
+            let temp_info = self.info.get(&InfoType::GS).unwrap();
+            if !seg.is_none() && seg.unwrap().pos < temp_info.pos {
+                seg = self.info.get(&InfoType::GS);
+            }
+            ret = Some(5);
+        }
+
+        ret
+    }
 
     fn curr_virt_loc(&self) -> usize {
         ((self.cs().base as u64) + self.ip.val) as usize
     }
 
-    pub fn read_code(&mut self, ram: &RAM) -> u8 {
+    pub fn read(&mut self, ram: &RAM) -> u8 {
         let ret = ram.read(self.curr_virt_loc());
         self.ip.val += 1;
         
         ret
     }
 
-    pub fn get(&self, ram: &RAM, addr: u64) -> u64 {
-        let mut base: u32 = self.ds().base;
+    pub fn get(&self, ram: &RAM, addr: u64) -> u8 {
+        let idx: u8 = self.get_seg_override_idx().or(Some(3)).unwrap();
+        let base: u32 = self.st_regs[idx as usize].base;
 
-        if self.info.contains_key(&InfoType::CS) {
-            base = self.cs().base;
-        }
-
-        ram.read(base as usize + addr as usize) as u64
+        ram.read(base as usize + addr as usize)
     }
 
     pub fn write(&self, ram: &mut RAM, addr: usize, val: u64, size: usize) {
@@ -154,45 +213,61 @@ impl CPU {
 
     pub fn write_reg(&self, ram: &mut RAM, addr: u64, reg: u8, reg_type: RegType) {
         let val: u64 = self.regs[reg as usize].get(reg_type);
-        let size: usize = self.get_size(reg_type);
+        let size: usize = get_size(reg_type);
 
         self.write(ram, addr as usize, val, size);
     }
 
-    pub fn get_size(&self, reg_type: RegType) -> usize {
-        match reg_type {
-            RegType::R8 | RegType::R8H => 1,
-            RegType::R16 => 2,
-            RegType::R32 => 4,
-            RegType::R64 => 8,
-            _ => 0,
-        }
+    pub fn read_val8(&mut self, ram: &mut RAM) -> u8 {
+        self.read(ram)
     }
 
-    pub fn get_val8(&mut self, ram: &mut RAM) -> u8 {
-        self.read_code(ram)
+    pub fn read_val16(&mut self, ram: &mut RAM) -> u16 {
+        self.read(ram) as u16 + ((self.read(ram) as u16) << 8)
     }
 
-    pub fn get_val16(&mut self, ram: &mut RAM) -> u16 {
-        self.read_code(ram) as u16 + ((self.read_code(ram) as u16) << 8)
+    pub fn read_val32(&mut self, ram: &mut RAM) -> u32 {
+        self.read(ram) as u32
+          + ((self.read(ram) as u32) << 8)
+          + ((self.read(ram) as u32) << 16)
+          + ((self.read(ram) as u32) << 24)
     }
 
-    pub fn get_val32(&mut self, ram: &mut RAM) -> u32 {
-        self.read_code(ram) as u32
-          + ((self.read_code(ram) as u32) << 8)
-          + ((self.read_code(ram) as u32) << 16)
-          + ((self.read_code(ram) as u32) << 24)
+    pub fn read_val64(&mut self, ram: &mut RAM) -> u64 {
+        self.read(ram) as u64
+          + ((self.read(ram) as u64) << 8)
+          + ((self.read(ram) as u64) << 16)
+          + ((self.read(ram) as u64) << 24)
+          + ((self.read(ram) as u64) << 32)
+          + ((self.read(ram) as u64) << 40)
+          + ((self.read(ram) as u64) << 48)
+          + ((self.read(ram) as u64) << 56)
     }
 
-    pub fn get_val64(&mut self, ram: &mut RAM) -> u64 {
-        self.read_code(ram) as u64
-          + ((self.read_code(ram) as u64) << 8)
-          + ((self.read_code(ram) as u64) << 16)
-          + ((self.read_code(ram) as u64) << 24)
-          + ((self.read_code(ram) as u64) << 32)
-          + ((self.read_code(ram) as u64) << 40)
-          + ((self.read_code(ram) as u64) << 48)
-          + ((self.read_code(ram) as u64) << 56)
+    pub fn get_val8(&mut self, ram: &mut RAM, addr: u64) -> u8 {
+        self.get(ram, addr)
+    }
+
+    pub fn get_val16(&mut self, ram: &mut RAM, addr: u64) -> u16 {
+        self.get(ram, addr) as u16 + ((self.get(ram, addr + 1) as u16) << 8)
+    }
+
+    pub fn get_val32(&mut self, ram: &mut RAM, addr: u64) -> u32 {
+        self.get(ram, addr) as u32
+          + ((self.get(ram, addr + 1) as u32) << 8)
+          + ((self.get(ram, addr + 2) as u32) << 16)
+          + ((self.get(ram, addr + 3) as u32) << 24)
+    }
+
+    pub fn get_val64(&mut self, ram: &mut RAM, addr: u64) -> u64 {
+        self.get(ram, addr) as u64
+          + ((self.get(ram, addr + 1) as u64) << 8)
+          + ((self.get(ram, addr + 2) as u64) << 16)
+          + ((self.get(ram, addr + 3) as u64) << 24)
+          + ((self.get(ram, addr + 4) as u64) << 32)
+          + ((self.get(ram, addr + 5) as u64) << 40)
+          + ((self.get(ram, addr + 6) as u64) << 48)
+          + ((self.get(ram, addr + 7) as u64) << 56)
     }
 
 
@@ -228,7 +303,7 @@ impl CPU {
     }
 
     fn run_step(&mut self, ram: &mut RAM) -> bool {
-        self.curr_inst = self.read_code(ram);
+        self.curr_inst = self.read(ram);
 
         let curr_inst = self.curr_inst;
         let self2 = self;
@@ -246,8 +321,26 @@ impl CPU {
         }
     }
 
+    pub fn get_reg_ptr(&self, ram: &mut RAM, idx: u8, reg_type: RegType) -> u64 {
+        let mut val: u64 = 0;
+
+        let segidx = self.get_seg_override_idx();
+        if !segidx.is_none() {
+            val += self.st_regs[segidx.unwrap() as usize].base as u64;
+        }
+
+        val += self.regs[idx as usize].get(reg_type);
+
+        val
+    }
+
     pub fn get_modrm_ptr(&mut self, ram: &mut RAM, modrm: &ModRM, disp: &mut u32) -> u64 {
         let mut val: u64 = 0;
+
+        let segidx = self.get_seg_override_idx();
+        if !segidx.is_none() {
+            val += self.st_regs[segidx.unwrap() as usize].base as u64;
+        }
 
         if !modrm.should_use_sib() {
             if !modrm.reg_type.is_none() {
@@ -271,15 +364,15 @@ impl CPU {
 
         match modrm.disp {
             1 => {
-                *disp = self.get_val8(ram) as u32;
+                *disp = self.read_val8(ram) as u32;
                 val += *disp as u64;
             },
             2 => {
-                *disp = self.get_val16(ram) as u32;
+                *disp = self.read_val16(ram) as u32;
                 val += *disp as u64;
             },
             4 => {
-                *disp = self.get_val32(ram) as u32;
+                *disp = self.read_val32(ram) as u32;
                 val += *disp as u64;
             },
             _ => {}
@@ -289,12 +382,26 @@ impl CPU {
     }
 
     pub fn get_modrm(&mut self, ram: &mut RAM, reg_type: RegType) -> ModRM {
-        let val: u8 = self.read_code(ram);
+        let val: u8 = self.read(ram);
 
         if self.is_16bit_mode() || (self.is_32bit_mode() && self.info.contains_key(&InfoType::ADDRESS)) {
             return self.get_modrm16(val, reg_type);
         } else {
             return self.get_modrm32(val, ram, reg_type);
+        }
+    }
+
+    pub fn get_ptr16(&self, modrm: &mut ModRM) {
+        match modrm._rm {
+            0 => { modrm.sib.idx = 3; modrm.sib.base = 4; }
+            1 => { modrm.sib.idx = 3; modrm.sib.base = 5; }
+            2 => { modrm.sib.idx = 7; modrm.sib.base = 4; }
+            3 => { modrm.sib.idx = 7; modrm.sib.base = 5; }
+            4 => { modrm.rm = 4; }
+            5 => { modrm.rm = 5; }
+            6 => { modrm.rm = 3; }
+            7 => { modrm.rm = 7; }
+            _ => {}
         }
     }
 
@@ -311,17 +418,7 @@ impl CPU {
             return modrm;
         }
 
-        match modrm._rm {
-            0 => { modrm.sib.idx = 3; modrm.sib.base = 4; }
-            1 => { modrm.sib.idx = 3; modrm.sib.base = 5; }
-            2 => { modrm.sib.idx = 7; modrm.sib.base = 4; }
-            3 => { modrm.sib.idx = 7; modrm.sib.base = 5; }
-            4 => { modrm.rm = 4; }
-            5 => { modrm.rm = 5; }
-            6 => { modrm.rm = 3; }
-            7 => { modrm.rm = 7; }
-            _ => {}
-        }
+        self.get_ptr16(&mut modrm);
 
         if modrm._mod == 0 && modrm._rm == 6 {
             modrm.rm_type = None;
@@ -431,7 +528,7 @@ impl CPU {
     }
 
     fn deter_modrm32_sib(&mut self, ram: &RAM, modrm: &mut ModRM, reg_type: RegType) {
-        let sib: u8 = self.read_code(ram);
+        let sib: u8 = self.read(ram);
 
         modrm.sib._ss   = get_mask(sib as u64, 7, 6) as u8;
         modrm.sib._base = get_mask(sib as u64, 5, 3) as u8;

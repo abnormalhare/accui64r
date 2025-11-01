@@ -1,4 +1,5 @@
 /target
 
+*.exe
 *.rom
 out.txt
