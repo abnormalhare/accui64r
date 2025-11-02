@@ -13,6 +13,37 @@ pub enum RegType {
     XMM,
 }
 
+impl RegType {
+    pub fn to_xmm_type(&self) -> XMMType {
+        match *self {
+            RegType::R32 => XMMType::N32,
+            RegType::R64 => XMMType::N64,
+            _ => XMMType::N128,
+        }
+    }
+}
+
+pub enum XMMType {
+    N32,
+    F32,
+    N64,
+    F64,
+    N128,
+    F128,
+    N256,
+    N512,
+}
+
+impl XMMType {
+    pub fn to_reg_type(&self) -> RegType {
+        match *self {
+            XMMType::N32 => RegType::R32,
+            XMMType::N64 => RegType::R64,
+            _ => RegType::XMM,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum REXBit {
     B = 1,
@@ -83,22 +114,147 @@ pub fn get_size(reg_type: RegType) -> usize {
 
 #[derive(Clone, Copy)]
 pub union XMMReg {
-    pub valn: [u64; 8],
-    pub valf: [f64; 8],
+    pub valn: [u32; 16],
+    pub valf: [f32; 16],
+}
+
+impl XMMReg {
+    pub fn setn(&mut self, xmm_type: XMMType, val: u128) {
+        unsafe {
+
+        match xmm_type {
+            XMMType::N32 => {
+                self.valn[0] = val as u32;
+                self.valn[1] = 0u32;
+            },
+            XMMType::N64 => {
+                self.valn[0] = val as u32;
+                self.valn[1] = (val >> 32) as u32;
+            },
+            XMMType::N128 => {
+                self.valn[0] = val as u32;
+                self.valn[1] = (val >> 32) as u32;
+                self.valn[2] = (val >> 64) as u32;
+                self.valn[3] = (val >> 96) as u32;
+            },
+            _ => {},
+        }
+
+        } // unsafe
+    }
+
+    pub fn setnl(&mut self, xmm_type: XMMType, val: [u32; 16]) {
+        unsafe {
+
+        match xmm_type {
+            XMMType::N32 => self.valn[0] = val[0],
+            XMMType::N64 => {
+                self.valn[0] = val[0]; self.valn[1] = val[1];
+            },
+            XMMType::N128 => {
+                self.valn[0] = val[0]; self.valn[1] = val[1];
+                self.valn[2] = val[2]; self.valn[3] = val[3];
+                self.valn[4] = val[4]; self.valn[5] = val[5];
+                self.valn[6] = val[6]; self.valn[7] = val[7];
+            },
+            XMMType::N256 => {
+                self.valn[0]  = val[0];  self.valn[1]  = val[1];
+                self.valn[2]  = val[2];  self.valn[3]  = val[3];
+                self.valn[4]  = val[4];  self.valn[5]  = val[5];
+                self.valn[6]  = val[6];  self.valn[7]  = val[7];
+                self.valn[8]  = val[8];  self.valn[9]  = val[9];
+                self.valn[10] = val[10]; self.valn[11] = val[11];
+                self.valn[12] = val[12]; self.valn[13] = val[13];
+                self.valn[14] = val[14]; self.valn[15] = val[15];
+            },
+            XMMType::N512 => {
+                self.valn = val;
+            },
+            _ => {},
+        }
+
+        } // unsafe
+    }
+
+    pub fn setf(&mut self, xmm_type: XMMType, val: [f32; 16]) {
+        unsafe {
+
+        match xmm_type {
+            XMMType::N32 => self.valf[0] = val[0],
+            XMMType::N64 => {
+                self.valf[0] = val[0]; self.valf[1] = val[1];
+            },
+            XMMType::N128 => {
+                self.valf[0] = val[0]; self.valf[1] = val[1];
+                self.valf[2] = val[2]; self.valf[3] = val[3];
+                self.valf[4] = val[4]; self.valf[5] = val[5];
+                self.valf[6] = val[6]; self.valf[7] = val[7];
+            },
+            XMMType::N256 => {
+                self.valf[0]  = val[0];  self.valf[1]  = val[1];
+                self.valf[2]  = val[2];  self.valf[3]  = val[3];
+                self.valf[4]  = val[4];  self.valf[5]  = val[5];
+                self.valf[6]  = val[6];  self.valf[7]  = val[7];
+                self.valf[8]  = val[8];  self.valf[9]  = val[9];
+                self.valf[10] = val[10]; self.valf[11] = val[11];
+                self.valf[12] = val[12]; self.valf[13] = val[13];
+                self.valf[14] = val[14]; self.valf[15] = val[15];
+            },
+            XMMType::N512 => {
+                self.valf = val;
+            },
+            _ => {},
+        }
+
+        } // unsafe
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct SegRegType {
+    pub accessed: bool,
+    pub write: bool,
+    pub exp_down: bool,
+    pub data_exec: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct SegReg {
-    pub selector: u16,
-    pub base: u32,
-    pub limit: u32,
-    pub attr: u16,
+    pub selector: u16,  // actual number stored
+    pub base: u32,      // true address
+    pub limit: u32,     // max ip index + base
+    pub stype: SegRegType, // info
+    pub s: bool,           // if register is data (0) or code (1)
+    pub dpl: u8,           // descriptor privilege level
+    pub present: bool,     // 
+    pub avl: bool,
+    pub l: bool,
+    pub db: bool,
+    pub gran: bool,
+
+    pub usable: bool,
+}
+
+impl SegReg {
+    pub fn set(&mut self, val: u16) {
+        self.selector = val;
+    }
 }
 
 #[derive(Clone, Copy)]
 pub struct DataTableReg {
     pub limit: u16,
     pub base: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct TableReg {
+    pub limit_lo: u16,
+    pub base_lo: u16,
+    pub base_mid: u8,
+    pub flags: u8,
+    pub limit_hi: u8,
+    pub base_hi: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -266,5 +422,33 @@ impl ModRM {
 
     pub fn should_use_sib(&self) -> bool {
         self.rm_type.is_none()
+    }
+
+    pub fn get_ptr_type(&self) -> Option<RegType> {
+        if self.should_use_sib() {
+            if !self.sib.idx_type.is_none() {
+                return self.sib.idx_type;
+            } else if !self.sib.base_type.is_none() {
+                return self.sib.base_type;
+            } else {
+                return None;
+            }
+        } else {
+            return self.rm_type;
+        }
+    }
+
+    pub fn set_ptr_type(&mut self, reg_type: Option<RegType>) {
+        if self.should_use_sib() {
+            if !self.sib.idx_type.is_none() {
+                self.sib.idx_type = reg_type;
+            } else if !self.sib.base_type.is_none() {
+                self.sib.base_type = reg_type;
+            } else {
+                self.sib.idx_type = reg_type;
+            }
+        } else {
+            self.rm_type = reg_type;
+        }
     }
 }

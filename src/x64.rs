@@ -1,7 +1,7 @@
 use accui64r_macncheese::find_opcode;
 
-use crate::{debug::get_reg_name, ram::RAM, reg::{CR0, CR4, DataTableReg, ModRM, REXBit, Reg, RegType, SegReg, XMMReg, get_size}};
-use std::{collections::HashMap};
+use crate::{debug::get_reg_name, ram::RAM, reg::{CR0, CR4, DataTableReg, ModRM, REXBit, Reg, RegType, SegReg, SegRegType, TableReg, XMMReg, get_size}};
+use std::{collections::HashMap, cmp::max};
 use crate::opcodes::std_ops::*;
 
 pub fn get_mask(val: u64, start: u8, end: u8) -> u64 {
@@ -27,14 +27,52 @@ pub struct Info {
     pub pos: u8,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OperandSize {
+    BIT16,
+    BIT32,
+    BIT64,
+}
+
+impl OperandSize {
+    pub fn to_reg_type(&self) -> RegType {
+        match *self {
+            OperandSize::BIT16 => RegType::R16,
+            OperandSize::BIT32 => RegType::R32,
+            OperandSize::BIT64 => RegType::R64,
+        }
+    }
+}
+
+pub enum AddressSize {
+    BIT16,
+    BIT32,
+    BIT64,
+}
+
+impl AddressSize {
+    pub fn to_reg_type(&self) -> RegType {
+        match *self {
+            AddressSize::BIT16 => RegType::R16,
+            AddressSize::BIT32 => RegType::R32,
+            AddressSize::BIT64 => RegType::R64,
+        }
+    }
+}
+
 pub struct CPU {
     running: bool,
+
+    // CPU internals
+    pub curr_mode: RegType,
+    pub cpl: u8,
+    pub tsc: u64,
 
     pub curr_inst: u8,
     pub info: HashMap<InfoType, Info>,
 
     pub regs: [Reg; 16],
-    pub st_regs: [SegReg; 6],
+    pub sg_regs: [SegReg; 6],
     pub mm_regs: [u64; 8],
     pub xm_regs: [XMMReg; 16],
     pub cr_regs: [u64; 16],
@@ -57,37 +95,48 @@ pub struct CPU {
     pub kernel_gs_base: u32,
 }
 
-pub enum OperandSize {
-    BIT16,
-    BIT32,
-    BIT64,
-}
-pub enum AddressSize {
-    BIT16,
-    BIT32,
-    BIT64,
-}
-
 impl CPU {
     pub fn new() -> Self {
-        let default_st_reg: SegReg = SegReg { selector: 0, base: 0, limit: 0xFFFF, attr: 0 };
+        let default_st_reg: SegReg = SegReg {
+            selector: 0,
+            base: 0,
+            limit: 0xFFFF,
+            stype: SegRegType {
+                accessed: true,
+                write: true,
+                exp_down: false,
+                data_exec: false,
+            },
+            s: false,
+            dpl: 0,
+            present: true,
+            avl: true,
+            l: false,
+            db: false,
+            gran: false,
+            usable: true
+        };
 
         let mut ret = Self {
             running: true,
+
+            curr_mode: RegType::R16,
+            cpl: 0,
+            tsc: 0,
 
             curr_inst: 0,
             info: HashMap::new(),
 
             regs: [Reg::new(); 16],
-            st_regs: [default_st_reg.clone(); 6],
+            sg_regs: [default_st_reg.clone(); 6],
             mm_regs: [0u64; 8],
-            xm_regs: [XMMReg { valn: [0u64; 8] }; 16],
-            cr_regs: [50, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            xm_regs: [XMMReg { valn: [0u32; 16] }; 16],
+            cr_regs: [0x60000010, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             db_regs: [0, 0, 0, 0, 0, 0, 0xFFFF0FF0, 0x400],
             tr_regs: [0u32; 8],
 
             ip: Reg { val: 0xFFF0 },
-            flags: 0,
+            flags: 2,
 
             gdtr: DataTableReg { limit: 0, base: 0xFFFF },
             ldtr: 0,
@@ -101,86 +150,26 @@ impl CPU {
         };
 
         ret.regs[3].val = 0x600;
-        ret.st_regs[1].selector = 0xF000; // = SegReg { selector: 0xF000, base: 0xFFFF0000, limit: 0xFFFF, attr: 0 };
-        ret.st_regs[1].base = 0xFFFF0000;
+        ret.sg_regs[1] = SegReg {
+            selector: 0xF000,
+            base: 0xFFFF0000,
+            limit: 0xFFFF,
+            stype: SegRegType { accessed: true, write: true, exp_down: false, data_exec: true },
+            s: true,
+            dpl: 0,
+            present: true,
+            avl: true,
+            l: false,
+            db: false,
+            gran: false,
+            usable: true,
+        };
 
         ret
     }
 
-    pub fn deter_op_size(&self) -> OperandSize {
-        if self.info.contains_key(&InfoType::OPERAND) ^ !self.is_16bit_mode() {
-            return OperandSize::BIT16;
-        }
-
-        if self.info.contains_key(&InfoType::REX) {
-            let rex= self.info.get(&InfoType::REX).unwrap();
-            if rex.val & REXBit::W as u8 != 0 {
-                return OperandSize::BIT64;
-            }
-        }
-
-        return OperandSize::BIT32;
-    }
-
-    pub fn deter_ad_size(&self) -> AddressSize {
-        if (self.is_16bit_mode() && !self.info.contains_key(&InfoType::ADDRESS)) || (self.is_32bit_mode() && self.info.contains_key(&InfoType::ADDRESS)) {
-            return AddressSize::BIT16;
-        }
-        if self.is_32bit_mode() || ((self.is_16bit_mode() || self.is_64bit_mode()) && self.info.contains_key(&InfoType::ADDRESS)) {
-            return AddressSize::BIT32;
-        }
-
-        AddressSize::BIT64
-    }
-
-    pub fn cs(&self) -> SegReg { self.st_regs[1] }
-    pub fn ds(&self) -> SegReg { self.st_regs[3] }
-
-    pub fn get_seg_override_idx(&self) -> Option<u8> {
-        let mut ret: Option<u8> = None;
-        let mut seg: Option<&Info> = None;
-
-        if self.info.contains_key(&InfoType::ES) {
-            ret = Some(0);
-            seg = self.info.get(&InfoType::ES);
-        }
-        if self.info.contains_key(&InfoType::CS) {
-            let temp_info = self.info.get(&InfoType::CS).unwrap();
-            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
-                ret = Some(1);
-                seg = self.info.get(&InfoType::CS);
-            }
-        }
-        if self.info.contains_key(&InfoType::SS) {
-            let temp_info = self.info.get(&InfoType::SS).unwrap();
-            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
-                ret = Some(2);
-                seg = self.info.get(&InfoType::SS);
-            }
-        }
-        if self.info.contains_key(&InfoType::DS) {
-            let temp_info = self.info.get(&InfoType::DS).unwrap();
-            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
-                ret = Some(3);
-                seg = self.info.get(&InfoType::DS);
-            }
-        }
-        if self.info.contains_key(&InfoType::FS) {
-            let temp_info = self.info.get(&InfoType::FS).unwrap();
-            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
-                ret = Some(4);
-                seg = self.info.get(&InfoType::FS);
-            }
-        }
-        if self.info.contains_key(&InfoType::GS) {
-            let temp_info = self.info.get(&InfoType::GS).unwrap();
-            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
-                ret = Some(5);
-            }
-        }
-
-        ret
-    }
+    pub fn cs(&self) -> &SegReg { &self.sg_regs[1] }
+    pub fn ds(&self) -> &SegReg { &self.sg_regs[3] }
 
     fn curr_virt_loc(&self) -> usize {
         ((self.cs().base as u64) + self.ip.val) as usize
@@ -189,20 +178,21 @@ impl CPU {
     pub fn read(&mut self, ram: &RAM) -> u8 {
         let ret = ram.read(self.curr_virt_loc());
         self.ip.val += 1;
+        self.tsc += 1;
         
         ret
     }
 
     pub fn get(&self, ram: &RAM, addr: u64) -> u8 {
         let idx: u8 = self.get_seg_override_idx().or(Some(3)).unwrap();
-        let base: u32 = self.st_regs[idx as usize].base;
+        let base: u32 = self.sg_regs[idx as usize].base;
 
         ram.read(base as usize + addr as usize)
     }
 
     pub fn write(&self, ram: &mut RAM, addr: usize, val: u64, size: usize) {
-        let mut base: u32 = self.st_regs[3].base; // DS
-        if self.info.contains_key(&InfoType::CS) { base = self.st_regs[1].base }
+        let mut base: u32 = self.sg_regs[3].base; // DS
+        if self.info.contains_key(&InfoType::CS) { base = self.sg_regs[1].base }
         
         let addr: usize = base as usize + addr;
         for i in 0..size {
@@ -269,20 +259,36 @@ impl CPU {
           + ((self.get(ram, addr + 7) as u64) << 56)
     }
 
-
     pub fn is_16bit_mode(&self) -> bool {
-        !CR0::get_flag(self.cr_regs[0], CR0::PROT_MODE)
+        self.curr_mode == RegType::R16
     }
-    
+
     pub fn is_32bit_mode(&self) -> bool {
-        CR0::get_flag(self.cr_regs[0], CR0::PROT_MODE) && !CR4::get_flag(self.cr_regs[4], CR4::PHYS_ADDR_EXT)
+        self.curr_mode == RegType::R32
     }
 
     pub fn is_64bit_mode(&self) -> bool {
-        CR0::get_flag(self.cr_regs[0], CR0::PROT_MODE)
-            && CR0::get_flag(self.cr_regs[0], CR0::PAGING)
-            && CR4::get_flag(self.cr_regs[4], CR4::PHYS_ADDR_EXT)
+        self.curr_mode == RegType::R64
     }
+
+    pub fn check_bit_mode_shift(&mut self) -> bool {
+        if self.is_16bit_mode() && CR0::get_flag(self.cr_regs[0], CR0::PROT_MODE) {
+            self.curr_mode = RegType::R32;
+            return true;
+        }
+
+        if self.is_32bit_mode() && CR0::get_flag(self.cr_regs[0], CR0::PAGING) && CR4::get_flag(self.cr_regs[4], CR4::PHYS_ADDR_EXT) {
+            self.curr_mode = RegType::R64;
+            return true;
+        }
+
+        false
+    }
+
+    pub fn effective_privilege_level(&self) -> u8 {
+        max(self.cpl, self.cs().dpl)
+    }
+
 
 
     fn dbp_start_new_inst(&self) {
@@ -298,6 +304,7 @@ impl CPU {
 
             self.dbp_regs();
             self.dbp_start_new_inst();
+            self.info.clear();
         }
     }
 
@@ -319,16 +326,152 @@ impl CPU {
             println!("{:>3}: {:016X}", get_reg_name(i + 3, RegType::R64), self.regs[i as usize + 3].get(RegType::R64));
         }
         println!();
+        for i in [0, 4] {
+            print!("{:>3}: {:016X}  ", get_reg_name(i + 0, RegType::MM), self.mm_regs[i as usize + 0]);
+            print!("{:>3}: {:016X}  ", get_reg_name(i + 1, RegType::MM), self.mm_regs[i as usize + 1]);
+            print!("{:>3}: {:016X}  ", get_reg_name(i + 2, RegType::MM), self.mm_regs[i as usize + 2]);
+            println!("{:>3}: {:016X}", get_reg_name(i + 3, RegType::MM), self.mm_regs[i as usize + 3]);
+        }
+        println!();
 
-        println!("IDTR: size: {}, addr: {}", self.idtr.base, self.idtr.limit);
+        println!("CR0: {:0>8X}, CR4: {:0>8X}", self.cr_regs[0], self.cr_regs[4]);
+        println!("IDTR: base: {}, limit: {} | GDTR: base: {}, limit: {}",
+            self.idtr.base, self.idtr.limit,
+            self.gdtr.base, self.gdtr.limit,
+        );
     }
+
+
+    fn get_table_reg(&self, ram: &RAM, dt: &DataTableReg, index: u16) -> TableReg {
+        let addr: usize = (dt.base + (index as u64 * 8)) as usize;
+        TableReg {
+            limit_lo: (ram.read(addr + 0) as u16) + (ram.read(addr + 1) as u16) << 8,
+            base_lo:  (ram.read(addr + 2) as u16) + (ram.read(addr + 3) as u16) << 8,
+            base_mid: ram.read(addr + 4),
+            flags:    ram.read(addr + 5),
+            limit_hi: ram.read(addr + 6),
+            base_hi:  ram.read(addr + 7)
+        }
+    }
+
+    pub fn setup_cs_seg(&mut self, ram: &mut RAM, selector: u16) {
+        let index: u16 = selector >> 3;
+        let ti: u8 = ((selector & 4) >> 2) as u8;
+        let dt: &DataTableReg = if ti == 0 { &self.gdtr } else { &self.idtr };
+
+        let descriptor = self.get_table_reg(ram, dt, index);
+
+        let base = descriptor.base_lo as u32 | ((descriptor.base_mid as u32) << 16) | ((descriptor.base_hi as u32) << 24);
+        
+        let granularity = get_mask(descriptor.limit_hi as u64, 7, 7) != 0;
+        let op_size     = get_mask(descriptor.limit_hi as u64, 6, 6) != 0;
+        let available   = get_mask(descriptor.limit_hi as u64, 4, 4) != 0;
+        let stype = get_mask(descriptor.flags as u64, 3, 0) as u8;
+        let mut limit = descriptor.limit_lo as u32 | ((descriptor.limit_hi as u32 & 0xF) << 16);
+        if granularity {
+            limit <<= 12;
+            limit |= 0xFFF;
+        }
+
+        let cs: &mut SegReg = &mut self.sg_regs[1];
+
+        cs.selector = selector;
+        cs.base = base;
+        cs.limit = limit;
+        cs.gran = granularity;
+        cs.db = op_size;
+        cs.avl = available;
+        cs.present         = get_mask(stype as u64, 7, 7) != 0;
+        cs.dpl             = get_mask(stype as u64, 6, 5) as u8;
+        cs.s               = get_mask(stype as u64, 4, 4) != 0;
+        cs.stype.data_exec = get_mask(stype as u64, 3, 3) != 0;
+        cs.stype.exp_down  = get_mask(stype as u64, 2, 2) != 0;
+        cs.stype.write     = get_mask(stype as u64, 1, 1) != 0;
+        cs.stype.accessed  = get_mask(stype as u64, 0, 0) != 0;
+        
+        self.cpl = cs.dpl;
+    }
+
+    pub fn get_seg_override_idx(&self) -> Option<u8> {
+        let mut ret: Option<u8> = None;
+        let mut seg: Option<&Info> = None;
+
+        if self.info.contains_key(&InfoType::ES) {
+            ret = Some(0);
+            seg = self.info.get(&InfoType::ES);
+        }
+        if self.info.contains_key(&InfoType::CS) {
+            let temp_info = self.info.get(&InfoType::CS).unwrap();
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(1);
+                seg = self.info.get(&InfoType::CS);
+            }
+        }
+        if self.info.contains_key(&InfoType::SS) {
+            let temp_info = self.info.get(&InfoType::SS).unwrap();
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(2);
+                seg = self.info.get(&InfoType::SS);
+            }
+        }
+        if self.info.contains_key(&InfoType::DS) {
+            let temp_info = self.info.get(&InfoType::DS).unwrap();
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(3);
+                seg = self.info.get(&InfoType::DS);
+            }
+        }
+        if self.info.contains_key(&InfoType::FS) {
+            let temp_info = self.info.get(&InfoType::FS).unwrap();
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(4);
+                seg = self.info.get(&InfoType::FS);
+            }
+        }
+        if self.info.contains_key(&InfoType::GS) {
+            let temp_info = self.info.get(&InfoType::GS).unwrap();
+            if seg.is_none() || seg.unwrap().pos < temp_info.pos {
+                ret = Some(5);
+            }
+        }
+
+        ret
+    }
+
+    pub fn deter_op_size(&self) -> OperandSize {
+        if (self.is_16bit_mode() && !self.info.contains_key(&InfoType::OPERAND)) || (!self.is_16bit_mode() && self.info.contains_key(&InfoType::OPERAND)) {
+            return OperandSize::BIT16;
+        }
+
+        if self.info.contains_key(&InfoType::REX) {
+            let rex= self.info.get(&InfoType::REX).unwrap();
+            if rex.val & REXBit::W as u8 != 0 {
+                return OperandSize::BIT64;
+            }
+        }
+
+        return OperandSize::BIT32;
+    }
+
+    pub fn deter_ad_size(&self) -> AddressSize {
+        if (self.is_16bit_mode() && !self.info.contains_key(&InfoType::ADDRESS)) || (self.is_32bit_mode() && self.info.contains_key(&InfoType::ADDRESS)) {
+            return AddressSize::BIT16;
+        }
+        if self.is_32bit_mode() || ((self.is_16bit_mode() || self.is_64bit_mode()) && self.info.contains_key(&InfoType::ADDRESS)) {
+            return AddressSize::BIT32;
+        }
+
+        AddressSize::BIT64
+    }
+
+
 
     pub fn get_reg_ptr(&self, idx: u8, reg_type: RegType) -> u64 {
         let mut val: u64 = 0;
 
         let segidx = self.get_seg_override_idx();
         if !segidx.is_none() {
-            val += self.st_regs[segidx.unwrap() as usize].base as u64;
+            val += self.sg_regs[segidx.unwrap() as usize].base as u64;
         }
 
         val += self.regs[idx as usize].get(reg_type);
@@ -441,7 +584,11 @@ impl CPU {
             0 => modrm.disp = 0,
             1 => modrm.disp = 1,
             2 => modrm.disp = 4,
-            3 => { self.deter_modrm32_mod(&mut modrm, reg_type); return modrm; },
+            3 => {
+                self.deter_modrm32_mod(&mut modrm, reg_type);
+                modrm.rm_type = modrm.reg_type;
+                return modrm;
+            },
             _ => {},
         }
 

@@ -13,6 +13,36 @@ pub fn get_bit_mask(reg_type: RegType, bits: usize) -> u64 {
     if reg_type == RegType::R64 { u64::MAX } else { (1u64 << bits) - 1 }
 }
 
+pub fn and(cpu: &mut CPU, reg_type: RegType, a: u64, b: u64) -> u64 {
+    let bits: usize = get_size(reg_type) * 8;
+    let mask: u64 = get_bit_mask(reg_type, bits);
+    let res: u64 = a & b;
+
+    Flag::set_flag(&mut cpu.flags, Flag::CARRY_FLAG,  false);
+    Flag::set_flag(&mut cpu.flags, Flag::PARITY_FLAG, get_parity(res as u8));
+    Flag::set_flag(&mut cpu.flags, Flag::AUX_FLAG,    false);
+    Flag::set_flag(&mut cpu.flags, Flag::ZERO_FLAG,   res == 0);
+    Flag::set_flag(&mut cpu.flags, Flag::SIGN_FLAG,   ((res >> (bits - 1)) & 1) != 0);
+    Flag::set_flag(&mut cpu.flags, Flag::OVER_FLAG,   false);
+
+    res & mask
+}
+
+pub fn or(cpu: &mut CPU, reg_type: RegType, a: u64, b: u64) -> u64 {
+    let bits: usize = get_size(reg_type) * 8;
+    let mask: u64 = get_bit_mask(reg_type, bits);
+    let res: u64 = a | b;
+
+    Flag::set_flag(&mut cpu.flags, Flag::CARRY_FLAG,  false);
+    Flag::set_flag(&mut cpu.flags, Flag::PARITY_FLAG, get_parity(res as u8));
+    Flag::set_flag(&mut cpu.flags, Flag::AUX_FLAG,    false);
+    Flag::set_flag(&mut cpu.flags, Flag::ZERO_FLAG,   res == 0);
+    Flag::set_flag(&mut cpu.flags, Flag::SIGN_FLAG,   ((res >> (bits - 1)) & 1) != 0);
+    Flag::set_flag(&mut cpu.flags, Flag::OVER_FLAG,   false);
+
+    res & mask
+}
+
 pub fn shl(cpu: &mut CPU, reg_type: RegType, a: u64, b: u64) -> u64 {
     let (res, _) = a.overflowing_shl(b as u32 /* ! */);
     let bits: usize = get_size(reg_type) * 8;

@@ -1,4 +1,4 @@
-use crate::{debug::get_reg_name, opcodes::x0f_01_ops::OP_0F_01_TBL, ram::RAM, reg::{ModRM, Reg, RegType}, x64::CPU};
+use crate::{debug::{OpOrder, dbp, get_reg_name}, opcodes::x0f_01_ops::OP_0F_01_TBL, ram::RAM, reg::{CR0, CR4, ModRM, Reg, RegType}, x64::{CPU, InfoType}};
 
 pub fn op_0f_00(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0F 00");
@@ -101,9 +101,22 @@ pub fn op_0f_1e(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 pub fn op_0f_1f(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0F 1F");
 }
-pub fn op_0f_20(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 0F 20");
+
+pub fn op_0f_20(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let val: u8 = cpu.read(ram);
+    let modrm: ModRM = ModRM::new(val as u64);
+    let reg_type: RegType = if cpu.is_64bit_mode() { RegType::R64 } else { RegType::R32 };
+
+    let src: u64      =      cpu.cr_regs[modrm._reg as usize];
+    let dst: &mut Reg = &mut cpu.regs   [modrm._rm  as usize];
+
+    dst.set(reg_type, src);
+
+    println!("MOV {}, CR{}", get_reg_name(modrm._rm, reg_type), modrm._reg);
+
+    false
 }
+
 pub fn op_0f_21(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0F 21");
 }
@@ -165,9 +178,20 @@ pub fn op_0f_2f(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 pub fn op_0f_30(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0F 30");
 }
-pub fn op_0f_31(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 0F 31");
+
+pub fn op_0f_31(cpu: &mut CPU, _ram: &mut RAM) -> bool {
+    if CR4::get_flag(cpu.cr_regs[4], CR4::TIME_STAMP) && cpu.cpl == 0 && CR0::get_flag(cpu.cr_regs[0], CR0::PROT_MODE) {
+        todo!("Added Protection Faults")
+    }
+    
+    cpu.regs[0].set(RegType::R32, cpu.tsc);
+    cpu.regs[2].set(RegType::R32, cpu.tsc >> 32);
+    
+    println!("RDTSC");
+
+    false
 }
+
 pub fn op_0f_32(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0F 32");
 }
@@ -348,9 +372,44 @@ pub fn op_0f_6c(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 pub fn op_0f_6d(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0F 6D");
 }
-pub fn op_0f_6e(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 0F 6E");
+
+#[allow(unused_assignments)] // why is this required for mutable 64bit numbers?
+pub fn op_0f_6e(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let mut modrm: ModRM = cpu.get_modrm(ram, RegType::R32);
+    let mut disp: u32 = 0;
+
+    let prev_rt: RegType = modrm.reg_type.unwrap();
+    let reg_type: RegType = if prev_rt == RegType::R16 { RegType::R32 } else { modrm.reg_type.unwrap() };
+    let mut val: u64 = 0;
+
+    if modrm.rm_is_reg() {
+        val = cpu.regs[modrm.rm as usize].get(reg_type);
+    } else {
+        let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
+        val = if reg_type == RegType::R32 {
+                cpu.get_val32(ram, addr) as u64
+              } else {
+                cpu.get_val64(ram, addr)
+              };
+    }
+
+    if cpu.info.contains_key(&InfoType::OPERAND) {
+        cpu.xm_regs[modrm.reg as usize].setn(reg_type.to_xmm_type(), val.into());
+        modrm.reg_type = Some(RegType::XMM);
+    } else {
+        cpu.mm_regs[modrm.reg as usize] = val;
+        modrm.reg_type = Some(RegType::MM);
+    }
+
+    if reg_type == RegType::R32 {
+        dbp(cpu, "MOVD", &modrm, disp, 0, OpOrder::R_RM);
+    } else {
+        dbp(cpu, "MOVQ", &modrm, disp, 0, OpOrder::R_RM);
+    }
+
+    false
 }
+
 pub fn op_0f_6f(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0F 6F");
 }

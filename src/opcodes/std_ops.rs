@@ -1,8 +1,29 @@
-use crate::{alu, debug::{OpOrder, dbp}, opcodes::xc1_ops::OP_C1_TBL, ram::RAM, reg::{CR4, Flag, ModRM, REXBit, RegType, get_size}, x64::{CPU, Info, InfoType}};
+use crate::{
+    alu,
+    debug::{OpOrder, dbp, get_reg_name},
+    opcodes::xc1_ops::OP_C1_TBL,
+    ram::RAM,
+    reg::{CR4, Flag, ModRM, RegType, get_size},
+    x64::{CPU, Info, InfoType, OperandSize}
+};
 use accui64r_macncheese::find_opcode_0f;
 
 pub type OpFunc    = fn(&mut CPU, &mut RAM, &ModRM);
 pub type OpFuncRet = fn(&mut CPU, &mut RAM, &ModRM) -> bool;
+
+// pub fn rm_handler_example(cpu: &mut CPU, ram: &mut RAM) -> bool {
+//     let mut modrm: ModRM = cpu.get_modrm(ram, RegType::R16);
+//     let mut disp: u32 = 0;
+
+//     if modrm.rm_is_reg() {
+
+//     } else {
+//        let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
+
+//     }
+
+//     false
+// }
 
 pub fn op_00(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 00");
@@ -43,9 +64,26 @@ pub fn op_0b(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 pub fn op_0c(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0C");
 }
-pub fn op_0d(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 0D");
+
+pub fn op_0d(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let reg_type = cpu.deter_op_size().to_reg_type();
+    
+    let dst: u64 = cpu.regs[0].get(reg_type);
+    let val: u64 = if reg_type == RegType::R16 { cpu.read_val16(ram) as u64 } else { cpu.read_val32(ram) as u64 };
+
+    let res = alu::or(cpu, reg_type, dst, val);
+    cpu.regs[0].set(reg_type, res);
+
+    match reg_type {
+        RegType::R16   => println!("OR {}, 0x{:0>4X}", get_reg_name(0, reg_type), val),
+        RegType::R32 |
+          RegType::R64 => println!("OR {}, 0x{:0>8X}", get_reg_name(0, reg_type), val),
+        _ => {},
+    }
+
+    false
 }
+
 pub fn op_0e(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0E");
 }
@@ -120,9 +158,26 @@ pub fn op_23(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 pub fn op_24(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 24");
 }
-pub fn op_25(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 25");
+
+pub fn op_25(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let reg_type = cpu.deter_op_size().to_reg_type();
+    
+    let dst: u64 = cpu.regs[0].get(reg_type);
+    let val: u64 = if reg_type == RegType::R16 { cpu.read_val16(ram) as u64 } else { cpu.read_val32(ram) as u64 };
+
+    let res = alu::and(cpu, reg_type, dst, val);
+    cpu.regs[0].set(reg_type, res);
+
+    match reg_type {
+        RegType::R16   => println!("AND {}, 0x{:0>4X}", get_reg_name(0, reg_type), val),
+        RegType::R32 |
+          RegType::R64 => println!("AND {}, 0x{:0>8X}", get_reg_name(0, reg_type), val),
+        _ => {},
+    }
+
+    false
 }
+
 pub fn op_26(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 26");
 }
@@ -512,15 +567,19 @@ pub fn op_8b(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 pub fn op_8c(cpu: &mut CPU, ram: &mut RAM) -> bool {
     let mut modrm: ModRM = cpu.get_modrm(ram, RegType::R32);
     let mut disp: u32 = 0;
+    
+    let val: u16 = cpu.sg_regs[modrm.reg as usize].selector;
+
+    if cpu.effective_privilege_level() > cpu.sg_regs[modrm.reg as usize].dpl {
+        todo!("Added Protection Faults")
+    }
 
     if modrm.rm_is_reg() {
         let reg_type: RegType = modrm.reg_type.unwrap();
-        let val: u16 = cpu.st_regs[modrm._reg as usize].selector;
 
-        cpu.regs[modrm._rm as usize].set(reg_type, val.into());
+        cpu.regs[modrm.rm as usize].set(reg_type, val.into());
     } else {
         let reg_type: RegType = RegType::R16;
-        let val: u16 = cpu.st_regs[modrm._reg as usize].selector;
         let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
 
         cpu.write(ram, addr as usize, val.into(), get_size(reg_type));
@@ -536,8 +595,32 @@ pub fn op_8c(cpu: &mut CPU, ram: &mut RAM) -> bool {
 pub fn op_8d(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 8D");
 }
-pub fn op_8e(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 8E");
+pub fn op_8e(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let mut modrm: ModRM = cpu.get_modrm(ram, RegType::R16);
+    let mut disp: u32 = 0;
+    
+    if cpu.effective_privilege_level() > cpu.sg_regs[modrm.reg as usize].dpl {
+        todo!("Added Protection Faults")
+    }
+
+    let reg_type = RegType::R16;
+    if modrm.rm_is_reg() {
+        let val: u16 = cpu.regs[modrm.rm as usize].get(reg_type) as u16;
+        
+        cpu.sg_regs[modrm.reg as usize].set(val);
+    } else {
+        let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
+        let val: u16 = cpu.get_val16(ram, addr);
+        
+        cpu.sg_regs[modrm.reg as usize].set(val);
+    }
+
+    modrm.reg_type = Some(RegType::ST);
+    modrm.rm_type = Some(RegType::R16);
+
+    dbp(cpu, "MOV", &modrm, disp, 0, OpOrder::R_RM);
+
+    false
 }
 pub fn op_8f(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 8F");
@@ -662,9 +745,35 @@ pub fn op_b6(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 pub fn op_b7(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode B7");
 }
-pub fn op_b8(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode B8");
+
+pub fn op_b8(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let op = cpu.deter_op_size();
+
+    match op {
+        OperandSize::BIT16 => {
+            let val: u16 = cpu.read_val16(ram);
+            cpu.regs[0].set(RegType::R16, val as u64);
+
+            println!("MOV AX, 0x{val:0>4X}");
+        },
+        OperandSize::BIT32 => {
+            let val: u32 = cpu.read_val32(ram);
+            cpu.regs[0].set(RegType::R32, val as u64);
+
+            println!("MOV EAX, 0x{val:0>8X}");
+        },
+        OperandSize::BIT64 => {
+            let val: u64 = cpu.read_val64(ram);
+            cpu.regs[0].set(RegType::R64, val);
+
+            println!("MOV RAX, 0x{val:0>16X}");
+            return false;
+        }
+    }
+
+    false
 }
+
 pub fn op_b9(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode B9");
 }
@@ -673,29 +782,29 @@ pub fn op_ba(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 }
 
 pub fn op_bb(cpu: &mut CPU, ram: &mut RAM) -> bool {
-    if cpu.info.contains_key(&InfoType::OPERAND) ^ !cpu.is_16bit_mode() {
-        let val: u16 = cpu.read_val16(ram);
-        cpu.regs[3].set(RegType::R16, val as u64);
+    let op = cpu.deter_op_size();
 
-        println!("MOV BX, {val:0>4X}");
-        return false;
-    }
-    
-    if cpu.info.contains_key(&InfoType::REX) {
-        let rex= cpu.info.get(&InfoType::REX).unwrap();
-        if rex.val & REXBit::W as u8 != 0 {
+    match op {
+        OperandSize::BIT16 => {
+            let val: u16 = cpu.read_val16(ram);
+            cpu.regs[3].set(RegType::R16, val as u64);
+
+            println!("MOV BX, 0x{val:0>4X}");
+        },
+        OperandSize::BIT32 => {
+            let val: u32 = cpu.read_val32(ram);
+            cpu.regs[3].set(RegType::R32, val as u64);
+
+            println!("MOV EBX, 0x{val:0>8X}");
+        },
+        OperandSize::BIT64 => {
             let val: u64 = cpu.read_val64(ram);
             cpu.regs[3].set(RegType::R64, val);
 
-            println!("MOV RBX, {val:0>16X}");
+            println!("MOV RBX, 0x{val:0>16X}");
             return false;
         }
     }
-
-    let val: u32 = cpu.read_val32(ram);
-    cpu.regs[3].set(RegType::R32, val as u64);
-
-    println!("MOV EBX, {val:0>8X}");
 
     false
 }
@@ -843,22 +952,54 @@ pub fn op_e8(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
 }
 
 pub fn op_e9(cpu: &mut CPU, ram: &mut RAM) -> bool {
-    if cpu.is_16bit_mode() {
+    let op = cpu.deter_op_size();
+    if op == OperandSize::BIT16 {
         let jump_addr: i16 = cpu.read_val16(ram) as i16;
         let mut ip: u16 = cpu.ip.get(RegType::R16) as u16;
         
         ip = ip.wrapping_add_signed(jump_addr);
         cpu.ip.set(RegType::R16, ip as u64);
 
-        println!("JMP {jump_addr:0>2X}")
+        println!("JMP 0x{jump_addr:0>2X}")
+    } else {
+        todo!("\n\nImplement opcode E9 bit mode");
     }
 
     false
 }
 
-pub fn op_ea(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode EA");
+pub fn op_ea(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let op = cpu.deter_op_size();
+    if op == OperandSize::BIT16 {
+        let jump_addr: u16 = cpu.read_val16(ram);
+        let selector:  u16 = cpu.read_val16(ram);
+
+        cpu.ip.val = jump_addr as u64;
+
+        let did_shift = cpu.check_bit_mode_shift();
+
+        println!("JMPF 0x{selector:0>4X}:0x{jump_addr:0>4X}");
+        if did_shift {
+            cpu.setup_cs_seg(ram, selector);
+            println!("SHIFTED INTO NEXT MODE");
+        }
+    } else {
+        let jump_addr: u32 = cpu.read_val32(ram);
+        let selector:  u16 = cpu.read_val16(ram);
+
+        cpu.ip.val = jump_addr as u64;
+
+        let did_shift = cpu.check_bit_mode_shift();
+
+        println!("JMPF 0x{selector:0>4X}:0x{jump_addr:0>8X}");
+        if did_shift {
+            cpu.setup_cs_seg(ram, selector);
+            println!("SHIFTED INTO NEXT MODE");
+        }
+    }
+    false
 }
+
 pub fn op_eb(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode EB");
 }
