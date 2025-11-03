@@ -25,24 +25,141 @@ pub type OpFuncRet = fn(&mut CPU, &mut RAM, &ModRM) -> bool;
 //     false
 // }
 
-pub fn op_00(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 00");
+pub fn op_00(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let modrm: ModRM = cpu.get_modrm(ram, RegType::R8);
+    let mut disp: u32 = 0;
+    let reg_type: RegType = modrm.reg_type.unwrap();
+
+    if modrm.rm_is_reg() {
+        let src = cpu.regs[modrm.reg as usize].get(reg_type);
+        let dst = cpu.regs[modrm.rm  as usize].get(reg_type);
+        let res = alu::add(cpu, reg_type, dst, src);
+        
+        cpu.regs[modrm.rm as usize].set(reg_type, res);
+    } else {
+        let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
+        
+        let src = cpu.get(ram, addr) as u64;
+        let dst = cpu.regs[modrm.rm as usize].get(reg_type);
+        let res = alu::add(cpu, reg_type, dst, src);
+        
+        cpu.write(ram, addr as usize, res, get_size(reg_type));
+    }
+
+    dbp(cpu, "ADD", &modrm, disp, 0, OpOrder::RM_R);
+
+    false
 }
-pub fn op_01(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 01");
+
+pub fn op_01(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let modrm: ModRM = cpu.get_modrm(ram, RegType::R32);
+    let mut disp: u32 = 0;
+    let reg_type: RegType = modrm.reg_type.unwrap();
+
+    if modrm.rm_is_reg() {
+        let src = cpu.regs[modrm.reg as usize].get(reg_type);
+        let dst = cpu.regs[modrm.rm  as usize].get(reg_type);
+        let res = alu::add(cpu, reg_type, dst, src);
+        
+        cpu.regs[modrm.rm as usize].set(reg_type, res);
+    } else {
+        let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
+        
+        let src = cpu.get(ram, addr) as u64;
+        let dst = cpu.regs[modrm.rm as usize].get(reg_type);
+        let res = alu::add(cpu, reg_type, dst, src);
+        
+        cpu.write(ram, addr as usize, res, get_size(reg_type));
+    }
+
+    dbp(cpu, "ADD", &modrm, disp, 0, OpOrder::RM_R);
+
+    false
 }
-pub fn op_02(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 02");
+
+pub fn op_02(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let modrm: ModRM = cpu.get_modrm(ram, RegType::R8);
+    let mut disp: u32 = 0;
+    let reg_type: RegType = modrm.reg_type.unwrap();
+
+    if modrm.rm_is_reg() {
+        let src = cpu.regs[modrm.rm  as usize].get(reg_type);
+        let dst = cpu.regs[modrm.reg as usize].get(reg_type);
+        let res = alu::add(cpu, reg_type, dst, src);
+        
+        cpu.regs[modrm.reg as usize].set(reg_type, res);
+    } else {
+        let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
+        
+        let src = cpu.get(ram, addr) as u64;
+        let dst = cpu.regs[modrm.rm as usize].get(reg_type);
+        let res = alu::add(cpu, reg_type, dst, src);
+        
+        cpu.regs[modrm.reg as usize].set(reg_type, res);
+    }
+
+    dbp(cpu, "ADD", &modrm, disp, 0, OpOrder::R_RM);
+
+    false
 }
-pub fn op_03(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 03");
+
+pub fn op_03(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let modrm: ModRM = cpu.get_modrm(ram, RegType::R32);
+    let mut disp: u32 = 0;
+    let reg_type: RegType = modrm.reg_type.unwrap();
+
+    if modrm.rm_is_reg() {
+        let src = cpu.regs[modrm.rm  as usize].get(reg_type);
+        let dst = cpu.regs[modrm.reg as usize].get(reg_type);
+        let res = alu::add(cpu, reg_type, dst, src);
+        
+        cpu.regs[modrm.reg as usize].set(reg_type, res);
+    } else {
+        let addr: u64 = cpu.get_modrm_ptr(ram, &modrm, &mut disp);
+        
+        let src = cpu.get(ram, addr) as u64;
+        let dst = cpu.regs[modrm.rm as usize].get(reg_type);
+        let res = alu::add(cpu, reg_type, dst, src);
+        
+        cpu.regs[modrm.reg as usize].set(reg_type, res);
+    }
+
+    dbp(cpu, "ADD", &modrm, disp, 0, OpOrder::R_RM);
+
+    false
 }
-pub fn op_04(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 04");
+
+pub fn op_04(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let dst: u64 = cpu.regs[0].get(RegType::R8);
+    let val: u64 = cpu.read_val8(ram).into();
+
+    let res: u64 = alu::add(cpu, RegType::R8, dst, val);
+    cpu.regs[0].set(RegType::R8, res);
+
+    println!("ADD AL, {:0>2X}", val);
+
+    false
 }
-pub fn op_05(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 05");
+
+pub fn op_05(cpu: &mut CPU, ram: &mut RAM) -> bool {
+    let reg_type = cpu.deter_op_size().to_reg_type();
+    
+    let dst: u64 = cpu.regs[0].get(reg_type);
+    let val: u64 = if reg_type == RegType::R16 { cpu.read_val16(ram) as u64 } else { cpu.read_val32(ram) as u64 };
+
+    let res = alu::add(cpu, reg_type, dst, val);
+    cpu.regs[0].set(reg_type, res);
+
+    match reg_type {
+        RegType::R16   => println!("ADD {}, 0x{:0>4X}", get_reg_name(0, reg_type), val),
+        RegType::R32 |
+          RegType::R64 => println!("ADD {}, 0x{:0>8X}", get_reg_name(0, reg_type), val),
+        _ => {},
+    }
+
+    false
 }
+
 pub fn op_06(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 06");
 }
