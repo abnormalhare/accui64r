@@ -184,16 +184,25 @@ pub fn op_0f_31(cpu: &mut CPU, _ram: &mut RAM) -> bool {
         todo!("Added Protection Faults")
     }
     
-    cpu.regs[0].set(RegType::R32, cpu.tsc);
-    cpu.regs[2].set(RegType::R32, cpu.tsc >> 32);
+    let tsc = cpu.get_msr(0x10).val;
+    cpu.regs[0].set(RegType::R32, tsc);
+    cpu.regs[2].set(RegType::R32, tsc >> 32);
     
     println!("RDTSC");
 
     false
 }
 
-pub fn op_0f_32(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
-    todo!("\n\nImplement opcode 0F 32");
+pub fn op_0f_32(cpu: &mut CPU, _ram: &mut RAM) -> bool {
+    let idx = cpu.regs[1].get(RegType::R32);
+    let val = cpu.get_msr(idx as u32).val;
+
+    cpu.regs[0].set(RegType::R32, val);
+    cpu.regs[2].set(RegType::R32, val >> 32);
+
+    println!("RDMSR");
+
+    false
 }
 pub fn op_0f_33(_cpu: &mut CPU, _ram: &mut RAM) -> bool {
     todo!("\n\nImplement opcode 0F 33");

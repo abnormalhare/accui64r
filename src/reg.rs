@@ -257,6 +257,12 @@ pub struct TableReg {
     pub base_hi: u8,
 }
 
+pub struct MsrEntry {
+    pub val: u64,
+    pub read_mask: u64,
+    pub write_mask: u64,
+}
+
 #[derive(Clone, Copy)]
 #[allow(non_camel_case_types)]
 pub enum Flag {

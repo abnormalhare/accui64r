@@ -1,7 +1,7 @@
 use accui64r_macncheese::find_opcode;
 
-use crate::{debug::get_reg_name, ram::RAM, reg::{CR0, CR4, DataTableReg, ModRM, REXBit, Reg, RegType, SegReg, SegRegType, TableReg, XMMReg, get_size}};
-use std::{collections::HashMap, cmp::max};
+use crate::{debug::get_reg_name, ram::RAM, reg::{CR0, CR4, DataTableReg, ModRM, MsrEntry, REXBit, Reg, RegType, SegReg, SegRegType, TableReg, XMMReg, get_size}};
+use std::{cmp::max, collections::HashMap, u64};
 use crate::opcodes::std_ops::*;
 
 pub fn get_mask(val: u64, start: u8, end: u8) -> u64 {
@@ -63,10 +63,12 @@ impl AddressSize {
 pub struct CPU {
     running: bool,
 
+    // CPU Memory
+    pub mmio: [u8; 0x100000],
+
     // CPU internals
     pub curr_mode: RegType,
     pub cpl: u8,
-    pub tsc: u64,
 
     pub curr_inst: u8,
     pub info: HashMap<InfoType, Info>,
@@ -87,8 +89,7 @@ pub struct CPU {
     pub tr: u16,
     pub idtr: DataTableReg,
 
-    // model-specific
-    pub ia32_efer: u32,
+    pub msr_regs: HashMap<u32, MsrEntry>,
 
     pub fs_base: u32,
     pub gs_base: u32,
@@ -120,9 +121,10 @@ impl CPU {
         let mut ret = Self {
             running: true,
 
+            mmio: [0u8; 0x100000],
+
             curr_mode: RegType::R16,
             cpl: 0,
-            tsc: 0,
 
             curr_inst: 0,
             info: HashMap::new(),
@@ -142,12 +144,15 @@ impl CPU {
             ldtr: 0,
             tr: 0,
             idtr: DataTableReg { limit: 0, base: 0xFFFF },
-            ia32_efer: 0,
+
+            msr_regs: HashMap::new(),
 
             fs_base: 0xC0000100,
             gs_base: 0xC0000101,
             kernel_gs_base: 0xC0000102,
         };
+
+        ret.init_msrs();
 
         ret.regs[3].val = 0x600;
         ret.sg_regs[1] = SegReg {
@@ -168,6 +173,11 @@ impl CPU {
         ret
     }
 
+    fn init_msrs(&mut self) {
+        self.msr_regs.insert(0x1B,  MsrEntry { val: 0xFEE00000,         read_mask: u64::MAX, write_mask: u64::MAX });
+        self.msr_regs.insert(0x277, MsrEntry { val: 0x0007040600070406, read_mask: u64::MAX, write_mask: u64::MAX });
+    }
+
     pub fn cs(&self) -> &SegReg { &self.sg_regs[1] }
     pub fn ds(&self) -> &SegReg { &self.sg_regs[3] }
 
@@ -178,7 +188,7 @@ impl CPU {
     pub fn read(&mut self, ram: &RAM) -> u8 {
         let ret = ram.read(self.curr_virt_loc());
         self.ip.val += 1;
-        self.tsc += 1;
+        self.get_msr(0x10).val += 1;
         
         ret
     }
@@ -259,6 +269,13 @@ impl CPU {
           + ((self.get(ram, addr + 7) as u64) << 56)
     }
 
+    pub fn get_msr(&mut self, idx: u32) -> &mut MsrEntry {
+        if !self.msr_regs.contains_key(&idx) {
+            self.msr_regs.insert(idx, MsrEntry { val: 0, read_mask: u64::MAX, write_mask: u64::MAX });
+        }
+        self.msr_regs.get_mut(&idx).unwrap()
+    }
+
     pub fn is_16bit_mode(&self) -> bool {
         self.curr_mode == RegType::R16
     }
@@ -283,6 +300,10 @@ impl CPU {
         }
 
         false
+    }
+
+    pub fn get_reg_type_from_mode(&self) -> RegType {
+        self.curr_mode
     }
 
     pub fn effective_privilege_level(&self) -> u8 {
@@ -327,14 +348,15 @@ impl CPU {
         }
         println!();
         for i in [0, 4] {
-            print!("{:>3}: {:016X}  ", get_reg_name(i + 0, RegType::MM), self.mm_regs[i as usize + 0]);
-            print!("{:>3}: {:016X}  ", get_reg_name(i + 1, RegType::MM), self.mm_regs[i as usize + 1]);
-            print!("{:>3}: {:016X}  ", get_reg_name(i + 2, RegType::MM), self.mm_regs[i as usize + 2]);
-            println!("{:>3}: {:016X}", get_reg_name(i + 3, RegType::MM), self.mm_regs[i as usize + 3]);
+            print!("{:>3}: 0x{:016X}  ", get_reg_name(i + 0, RegType::MM), self.mm_regs[i as usize + 0]);
+            print!("{:>3}: 0x{:016X}  ", get_reg_name(i + 1, RegType::MM), self.mm_regs[i as usize + 1]);
+            print!("{:>3}: 0x{:016X}  ", get_reg_name(i + 2, RegType::MM), self.mm_regs[i as usize + 2]);
+            println!("{:>3}: 0x{:016X}", get_reg_name(i + 3, RegType::MM), self.mm_regs[i as usize + 3]);
         }
         println!();
 
-        println!("CR0: {:0>8X}, CR4: {:0>8X}", self.cr_regs[0], self.cr_regs[4]);
+        println!("RFLAGS: 0x{:016X}", self.flags);
+        println!("CR0: 0x{:0>8X}, CR4: 0x{:0>8X}", self.cr_regs[0], self.cr_regs[4]);
         println!("IDTR: base: {}, limit: {} | GDTR: base: {}, limit: {}",
             self.idtr.base, self.idtr.limit,
             self.gdtr.base, self.gdtr.limit,
@@ -586,7 +608,15 @@ impl CPU {
             2 => modrm.disp = 4,
             3 => {
                 self.deter_modrm32_mod(&mut modrm, reg_type);
-                modrm.rm_type = modrm.reg_type;
+                if reg_type == RegType::R8 || reg_type == RegType::R8H {
+                    if modrm._rm >= 4 && modrm._rm < 8 {
+                        modrm.rm_type = Some(RegType::R8H);
+                        modrm._rm -= 4;
+                        modrm.rm = modrm._rm;
+                    }
+                } else {
+                    modrm.rm_type = modrm.reg_type;
+                }
                 return modrm;
             },
             _ => {},
@@ -641,6 +671,11 @@ impl CPU {
         let rmidx:  u8 = modrm._rm  | (((rex.val & REXBit::B as u8 != 0) as u8) << 3);
         let regidx: u8 = modrm._reg | (((rex.val & REXBit::R as u8 != 0) as u8) << 3);
 
+        modrm.rm_type = if self.is_32bit_mode() { Some(RegType::R32) } else { Some(RegType::R64) };
+        if self.info.contains_key(&InfoType::ADDRESS) {
+            modrm.rm_type = if self.is_32bit_mode() { Some(RegType::R16) } else { Some(RegType::R32) };
+        }
+
         modrm.reg_type = Some(reg_type);
         match reg_type {
             RegType::R8 | RegType::R8H => {
@@ -649,10 +684,6 @@ impl CPU {
                 if modrm._reg >= 4 && modrm._reg < 8 && !self.info.contains_key(&InfoType::REX) {
                     modrm._reg -= 4;
                     modrm.reg_type = Some(RegType::R8H);
-                }
-                if modrm._rm >= 4 && modrm._rm < 8 {
-                    modrm._rm -= 4;
-                    modrm.rm_type = Some(RegType::R8H);
                 }
                 CPU::set_modrm_idx(modrm, rmidx, regidx);
             }
